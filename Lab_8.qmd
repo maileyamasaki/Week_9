@@ -1,0 +1,482 @@
+---
+title: "Lab 8: Cannabis Types"
+author: "Maile Yamasaki"
+format:
+ html:
+   theme: cosmo
+   embed-resources: true
+execute:
+ echo: true
+ warning: false
+---
+
+Github Link: https://github.com/maileyamasaki/Week_9
+
+```{python}
+import pandas as pd
+import numpy as np
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.compose import make_column_selector, ColumnTransformer
+from sklearn.model_selection import cross_val_score
+from sklearn.metrics import confusion_matrix
+from sklearn.model_selection import GridSearchCV, train_test_split
+from sklearn.svm import SVC
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis, QuadraticDiscriminantAnalysis
+from sklearn.tree import DecisionTreeClassifier, plot_tree
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.linear_model import LogisticRegression
+```
+
+```{python}
+data = pd.read_csv("https://www.dropbox.com/s/s2a1uoiegitupjc/cannabis_full.csv?dl=1")
+data = data.dropna()
+```
+
+**Part 1: Binary Classification**
+```{python}
+dat = data[data["Type"].isin(["sativa", "indica"])]
+```
+
+I will use ROC AUC because it measures how well the model separates the two classes overall, without favoring either Indica or Sativa.
+
+```{python}
+X = dat.drop(['Type', 'Strain', 'Effects', 'Flavor'], axis=1)
+y = dat['Type']
+```
+
+```{python}
+ct = ColumnTransformer(
+  [
+    ("standardize", StandardScaler(), make_column_selector(dtype_include=np.number))
+  ],
+  remainder = "passthrough"
+).set_output(transform = "pandas")
+
+```
+
+**Q1: LDA**
+```{python}
+lda = Pipeline([
+    ("preprocessing", ct),
+    ("lda", LinearDiscriminantAnalysis())
+]).set_output(transform="pandas")
+
+lda_roc_auc = cross_val_score(lda, X, y, cv=5, scoring='roc_auc')
+
+print("Mean ROC AUC:", lda_roc_auc.mean())
+
+lda_fit = lda.fit(X,y)
+
+y_pred_lda = pd.Series(lda_fit.predict(X), name = "Predicted")
+
+print(pd.crosstab(y, y_pred_lda, margins=True))
+```
+
+**Q2: QDA**
+```{python}
+qda = Pipeline([
+    ("preprocessing", ct),
+    ("qda", QuadraticDiscriminantAnalysis())
+]).set_output(transform="pandas")
+
+param_grid_qda = {"qda__reg_param": [0.0, 0.1, 0.2, 0.5, 0.9]}
+
+qda_grid = GridSearchCV(qda, param_grid_qda, cv=5, scoring="roc_auc")
+
+qda_fit = qda_grid.fit(X, y)
+
+print("Mean ROC AUC:", qda_grid.best_score_)
+
+y_pred_qda = pd.Series(qda_fit.predict(X), name="Predicted")
+
+print(pd.crosstab(y, y_pred_qda, margins=True))
+```
+
+**Q3: SVC**
+```{python}
+svc = Pipeline([
+    ("preprocessing", ct),
+    ("svc", SVC(kernel="linear"))
+]).set_output(transform="pandas")
+
+param_grid_svc = {"svc__C": [0.01, 0.1, 1, 10, 100]}
+
+svc_grid = GridSearchCV(svc, param_grid_svc, cv=5, scoring="roc_auc")
+
+svc_fit = svc_grid.fit(X, y)
+
+print("Mean ROC AUC:", svc_grid.best_score_)
+
+y_pred_svc = pd.Series(svc_fit.predict(X), name="Predicted")
+
+print(pd.crosstab(y, y_pred_svc, margins=True))
+```
+
+**Q4: SVM**
+```{python}
+svm = Pipeline([
+    ("preprocessing", ct),
+    ("svm", SVC(kernel="poly"))
+]).set_output(transform="pandas")
+
+param_grid_svm = {
+    "svm__C": [0.01, 0.1, 1, 10, 100],
+    "svm__degree": [2, 3, 4],
+    "svm__coef0": [0, 1]   
+}
+
+svm_grid = GridSearchCV(svm, param_grid_svm, cv=5, scoring="roc_auc")
+
+svm_fit = svm_grid.fit(X, y)
+
+print("Mean ROC AUC:", svm_grid.best_score_)
+
+y_pred_svm = pd.Series(svm_fit.predict(X), name="Predicted")
+
+print(pd.crosstab(y, y_pred_svm, margins=True))
+```
+
+**Part 2: Natural Multiclass**
+
+**Q1**
+```{python}
+X = data.drop(['Type', 'Strain', 'Effects', 'Flavor'], axis=1)
+y = data["Type"] 
+
+dt = Pipeline([
+    ("preprocessing", ct),
+    ("dt_classifier", DecisionTreeClassifier(max_depth=3, random_state=42))]
+).set_output(transform="pandas")
+
+param_grid_dt = {"dt_classifier__ccp_alpha": [0.0, 0.001, 0.01, 0.1]}
+
+dt_grid = GridSearchCV(dt, param_grid_dt, cv=5, scoring="accuracy")
+
+dt_fit = dt_grid.fit(X, y)
+
+print("Mean Accuracy:", dt_grid.best_score_)
+
+y_pred_dt = pd.Series(dt_fit.predict(X), name="Predicted")
+
+print(pd.crosstab(y, y_pred_dt, margins=True))
+
+plot_tree(
+    dt_fit.best_estimator_.named_steps["dt_classifier"],
+    feature_names = X.columns,
+    class_names = dt_fit.best_estimator_.named_steps["dt_classifier"].classes_,
+    filled = True
+)
+```
+
+The decision tree uses strain effects to distinguish between Hybrid, Indica, and Sativa. The first split is based on the “Sleepy” effect. Later splits include “Energetic,” “Relaxed,” and “Uplifted,” which further adjust the classification. Overall accuracy is best on Hybrid strains which makes sense because many strains overlap in effects and hybrids share traits with both Indica and Sativa.
+
+**Q2**
+
+**LDA**
+```{python}
+lda = Pipeline([
+    ("preprocessing", ct),
+    ("lda", LinearDiscriminantAnalysis())
+]).set_output(transform="pandas")
+
+lda_accuracy = cross_val_score(lda, X, y, cv=5, scoring='accuracy')
+
+print("Mean Accuracy:", lda_accuracy.mean())
+
+lda_fit = lda.fit(X,y)
+
+y_pred_lda = pd.Series(lda_fit.predict(X), name = "Predicted")
+
+print(pd.crosstab(y, y_pred_lda, margins=True))
+```
+
+**QDA**
+```{python}
+qda = Pipeline([
+    ("preprocessing", ct),
+    ("qda", QuadraticDiscriminantAnalysis())
+]).set_output(transform="pandas")
+
+param_grid_qda = {"qda__reg_param": [0.0, 0.1, 0.2, 0.5, 0.9]}
+
+qda_grid = GridSearchCV(qda, param_grid_qda, cv=5, scoring="accuracy")
+
+qda_fit = qda_grid.fit(X, y)
+
+print("Mean Accuracy:", qda_grid.best_score_)
+
+y_pred_qda = pd.Series(qda_fit.predict(X), name="Predicted")
+
+print(pd.crosstab(y, y_pred_qda, margins=True))
+```
+
+**KNN**
+```{python}
+knn = Pipeline([
+    ("preprocessing", ct),
+    ("knn", KNeighborsClassifier())
+]).set_output(transform="pandas")
+
+param_grid_knn = {"knn__n_neighbors": [1, 2, 7, 10, 20]}
+
+knn_grid = GridSearchCV(knn, param_grid_knn, cv=5, scoring="accuracy")
+
+knn_fit = knn_grid.fit(X, y)
+
+print("Mean Accuracy:", knn_grid.best_score_)
+
+y_pred_knn = pd.Series(knn_fit.predict(X), name="Predicted")
+
+print(pd.crosstab(y, y_pred_knn, margins=True))
+```
+
+**Q3**
+
+The metric scores are worse, although the number of accurate predictions are higher. This could be explained by the fact that there in another strain: Hybrid. Thus it is more difficult to accurately predict the strain when there are more classes and there is more overlap between Sativa and Hybrid and Indica and Hybrid. 
+
+**Part 3: Multiclass from Binary**
+
+**Q1**
+
+**SVC - Indica vs. Not Indica**
+```{python}
+y_indica = (data["Type"] == "indica").astype(int)
+
+svc_indica = Pipeline([
+    ("preprocessing", ct),
+    ("svc", SVC(kernel="linear"))
+]).set_output(transform="pandas")
+
+svc_indica_score = cross_val_score(svc_indica, X, y_indica, cv=5, scoring="accuracy")
+print("SVC – Indica vs Not Indica Accuracy:", svc_indica_score.mean())
+
+svc_indica_fit = svc_indica.fit(X, y_indica)
+y_pred_indica = svc_indica_fit.predict(X)
+
+print(pd.crosstab(y_indica, y_pred_indica, margins=True))
+```
+
+**SVC - Sativa vs. Not Sativa**
+```{python}
+y_sativa = (data["Type"] == "sativa").astype(int)
+
+svc_sativa = Pipeline([
+    ("preprocessing", ct),
+    ("svc", SVC(kernel="linear"))
+]).set_output(transform="pandas")
+
+svc_sativa_score = cross_val_score(svc_sativa, X, y_sativa, cv=5, scoring="accuracy")
+print("SVC – Sativa vs Not Sativa Accuracy:", svc_sativa_score.mean())
+
+svc_sativa_fit = svc_sativa.fit(X, y_sativa)
+y_pred_sativa = svc_sativa_fit.predict(X)
+
+print(pd.crosstab(y_sativa, y_pred_sativa, margins=True))
+```
+
+**SVC - Hybrid vs. Not Hybrid**
+```{python}
+y_hybrid = (data["Type"] == "hybrid").astype(int)
+
+svc_hybrid = Pipeline([
+    ("preprocessing", ct),
+    ("svc", SVC(kernel="linear"))
+]).set_output(transform="pandas")
+
+svc_hybrid_score = cross_val_score(svc_hybrid, X, y_hybrid, cv=5, scoring="accuracy")
+print("SVC – Hybrid vs Not Hybrid Accuracy:", svc_hybrid_score.mean())
+
+svc_hybrid_fit = svc_hybrid.fit(X, y_hybrid)
+y_pred_hybrid = svc_hybrid_fit.predict(X)
+
+print(pd.crosstab(y_hybrid, y_pred_hybrid, margins=True))
+```
+
+**Logistic Regression - Indica vs. Not Indica**
+```{python}
+log_indica = Pipeline([
+    ("preprocessing", ct),
+    ("log", LogisticRegression(solver="liblinear"))
+]).set_output(transform="pandas")
+
+log_indica_score = cross_val_score(log_indica, X, y_indica, cv=5, scoring="accuracy")
+print("LogReg – Indica vs Not Indica Accuracy:", log_indica_score.mean())
+
+log_indica_fit = log_indica.fit(X, y_indica)
+y_pred_log_indica = log_indica_fit.predict(X)
+
+print(pd.crosstab(y_indica, y_pred_log_indica, margins=True))
+```
+
+**Logistic Regression - Sativa vs. Not Sativa**
+```{python}
+log_sativa = Pipeline([
+    ("preprocessing", ct),
+    ("log", LogisticRegression(solver="liblinear"))
+]).set_output(transform="pandas")
+
+log_sativa_score = cross_val_score(log_sativa, X, y_sativa, cv=5, scoring="accuracy")
+print("LogReg – Sativa vs Not Sativa Accuracy:", log_sativa_score.mean())
+
+log_sativa_fit = log_sativa.fit(X, y_sativa)
+y_pred_log_sativa = log_sativa_fit.predict(X)
+
+print(pd.crosstab(y_sativa, y_pred_log_sativa, margins=True))
+```
+
+**Logistic Regression - Hybrid vs. Not Hybrid**
+```{python}
+log_hybrid = Pipeline([
+    ("preprocessing", ct),
+    ("log", LogisticRegression(solver="liblinear"))
+]).set_output(transform="pandas")
+
+log_hybrid_score = cross_val_score(log_hybrid, X, y_hybrid, cv=5, scoring="accuracy")
+print("LogReg – Hybrid vs Not Hybrid Accuracy:", log_hybrid_score.mean())
+
+log_hybrid_fit = log_hybrid.fit(X, y_hybrid)
+y_pred_log_hybrid = log_hybrid_fit.predict(X)
+
+print(pd.crosstab(y_hybrid, y_pred_log_hybrid, margins=True))
+```
+
+**Q2**
+
+The best of the six models was the logistic regression model testing Sativa vs. Not Sativa and the worst of the models was the logstic regression model testing Hybrid vs. Not Hybrid. This makes intuitive sense because Sativa has the most distinct and recognizable effects. It also makes sense that Hybrid did the worst because there is more crossover among Hybrid strains and non Hybrid strains due to the fact that Hybrids are a mix of both Indica and Sativa. 
+
+**Q3**
+
+**SVC - Indica vs. Sativa**
+```{python}
+dat_is = data[data["Type"].isin(["indica", "sativa"])]
+
+X_is = dat_is.drop(['Type', 'Strain', 'Effects', 'Flavor'], axis=1)
+y_is = dat_is["Type"]
+
+svc_is = Pipeline([
+    ("preprocessing", ct),
+    ("svc", SVC(kernel="linear"))
+]).set_output(transform="pandas")
+
+svc_is_acc = cross_val_score(svc_is, X_is, y_is, cv=5, scoring="accuracy")
+print("SVC Accuracy (Indica vs Sativa):", svc_is_acc.mean())
+
+svc_is_fit = svc_is.fit(X_is, y_is)
+y_pred_is = pd.Series(svc_is_fit.predict(X_is), name="Predicted")
+
+print(pd.crosstab(y_is, y_pred_is, margins=True))
+```
+
+**SVC - Indica vs. Hybrid**
+```{python}
+dat_ih = data[data["Type"].isin(["indica", "hybrid"])]
+
+X_ih = dat_ih.drop(['Type', 'Strain', 'Effects', 'Flavor'], axis=1)
+y_ih = dat_ih["Type"]
+
+svc_ih = Pipeline([
+    ("preprocessing", ct),
+    ("svc", SVC(kernel="linear"))
+]).set_output(transform="pandas")
+
+svc_ih_acc = cross_val_score(svc_ih, X_ih, y_ih, cv=5, scoring="accuracy")
+print("SVC Accuracy (Indica vs Hybrid):", svc_ih_acc.mean())
+
+svc_ih_fit = svc_ih.fit(X_ih, y_ih)
+y_pred_ih = pd.Series(svc_ih_fit.predict(X_ih), name="Predicted")
+
+print(pd.crosstab(y_ih, y_pred_ih, margins=True))
+```
+
+**SVC - Hybrid vs. Sativa**
+```{python}
+dat_hs = data[data["Type"].isin(["sativa", "hybrid"])]
+
+X_hs = dat_hs.drop(['Type', 'Strain', 'Effects', 'Flavor'], axis=1)
+y_hs = dat_hs["Type"]
+
+svc_hs = Pipeline([
+    ("preprocessing", ct),
+    ("svc", SVC(kernel="linear"))
+]).set_output(transform="pandas")
+
+svc_hs_acc = cross_val_score(svc_hs, X_hs, y_hs, cv=5, scoring="accuracy")
+print("SVC Accuracy (Hybrid vs Sativa):", svc_hs_acc.mean())
+
+svc_hs_fit = svc_hs.fit(X_hs, y_hs)
+y_pred_hs = pd.Series(svc_hs_fit.predict(X_hs), name="Predicted")
+
+print(pd.crosstab(y_hs, y_pred_hs, margins=True))
+```
+
+**Logistic Regression - Indica vs. Sativa**
+```{python}
+dat_is = data[data["Type"].isin(["indica", "sativa"])]
+
+X_is = dat_is.drop(['Type', 'Strain', 'Effects', 'Flavor'], axis=1)
+y_is = dat_is["Type"]
+
+log_is = Pipeline([
+    ("preprocessing", ct),
+    ("log", LogisticRegression(solver="liblinear"))
+]).set_output(transform="pandas")
+
+log_is_acc = cross_val_score(log_is, X_is, y_is, cv=5, scoring="accuracy")
+print("LogReg Accuracy (Indica vs Sativa):", log_is_acc.mean())
+
+log_is_fit = log_is.fit(X_is, y_is)
+y_pred_log_is = pd.Series(log_is_fit.predict(X_is), name="Predicted")
+
+print(pd.crosstab(y_is, y_pred_log_is, margins=True))
+```
+
+**Logistic Regression - Indica vs. Hybrid**
+```{python}
+dat_ih = data[data["Type"].isin(["indica", "hybrid"])]
+
+X_ih = dat_ih.drop(['Type', 'Strain', 'Effects', 'Flavor'], axis=1)
+y_ih = dat_ih["Type"]
+
+log_ih = Pipeline([
+    ("preprocessing", ct),
+    ("log", LogisticRegression(solver="liblinear"))
+]).set_output(transform="pandas")
+
+log_ih_acc = cross_val_score(log_ih, X_ih, y_ih, cv=5, scoring="accuracy")
+print("LogReg Accuracy (Indica vs Hybrid):", log_ih_acc.mean())
+
+log_ih_fit = log_ih.fit(X_ih, y_ih)
+y_pred_log_ih = pd.Series(log_ih_fit.predict(X_ih), name="Predicted")
+
+print(pd.crosstab(y_ih, y_pred_log_ih, margins=True))
+```
+
+**Logistic Regression - Hybrid vs. Sativa**
+```{python}
+dat_hs = data[data["Type"].isin(["sativa", "hybrid"])]
+
+X_hs = dat_hs.drop(['Type', 'Strain', 'Effects', 'Flavor'], axis=1)
+y_hs = dat_hs["Type"]
+
+log_hs = Pipeline([
+    ("preprocessing", ct),
+    ("log", LogisticRegression(solver="liblinear"))
+]).set_output(transform="pandas")
+
+log_hs_acc = cross_val_score(log_hs, X_hs, y_hs, cv=5, scoring="accuracy")
+print("LogReg Accuracy (Hybrid vs Sativa):", log_hs_acc.mean())
+
+log_hs_fit = log_hs.fit(X_hs, y_hs)
+y_pred_log_hs = pd.Series(svc_hs_fit.predict(X_hs), name="Predicted")
+
+print(pd.crosstab(y_hs, y_pred_log_hs, margins=True))
+```
+
+**Q4**
+
+The best of the six models was the SVC model testing Indica vs. Sativa and the worst of the models was the logistic regression model testing Hybrid vs. Sativa. This makes intuitive sense because Sativa and Indica vary the most from eachother making them more distinguishable. It also makes sense that Hybrid vs. Sativa did the worst because there is more crossover among Hybrid strains and Sativa strains in this data set making it harder to distinguish the two. 
+
+**Q5**
+
+If we had simply input the full data, with three classes, into the LogisticRegression function, it would taken an "OvR" approach as the default because it naturally models one class versus all others using separate logistic functions. For the SVC function, it would have taken the "OvO" approach because SVMs work best when comparing classes two at a time.
